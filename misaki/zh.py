@@ -1,11 +1,15 @@
 from .transcription import pinyin_to_ipa
 from pypinyin import lazy_pinyin, Style
-from typing import Tuple
+from .token import MToken
+from typing import List, Optional, Tuple
 import cn2an
 import jieba
 import re
 
 class ZHG2P:
+    # unk indicates the fallback phoneme marker for unknown or unsupported text. Its default value is ❓.
+    # For example, when an English segment, e.g. "OpenAI", is encountered without an en_callable, the code uses: phonemes = self.unk
+    # So "OpenAI" becomes an MToken whose phonemes are ❓, indicating that the frontend could not produce a pronunciation.
     def __init__(self, version=None, unk='❓', en_callable=None):
         self.version = version
         self.frontend = None
@@ -52,34 +56,56 @@ class ZHG2P:
         return text.strip()
 
     @staticmethod
-    def legacy_call(text) -> str:
-        is_zh = re.match(f'[\u4E00-\u9FFF]', text[0])
-        result = ''
-        for segment in re.findall(f'[\u4E00-\u9FFF]+|[^\u4E00-\u9FFF]+', text):
-            if is_zh:
+    def legacy_call(text: str) -> Tuple[str, List[MToken]]:
+        """Return the base-model IPA output together with alignable text tokens."""
+        tokens: List[MToken] = []
+        for segment in re.findall(r'[\u4E00-\u9FFF]+|[^\u4E00-\u9FFF]+', text):
+            if re.fullmatch(r'[\u4E00-\u9FFF]+', segment):
                 words = jieba.lcut(segment, cut_all=False)
-                segment = ' '.join(ZHG2P.word2ipa(w) for w in words)
-            result += segment
-            is_zh = not is_zh
-        return result.replace(chr(815), '')
+                for index, word in enumerate(words):
+                    tokens.append(MToken(
+                        text=word,
+                        tag='zh',
+                        whitespace=' ' if index < len(words) - 1 else '',
+                        phonemes=ZHG2P.word2ipa(word).replace(chr(815), ''),
+                    ))
+                continue
 
-    def __call__(self, text, en_callable=None) -> Tuple[str, None]:
+            # Legacy ZHG2P passes punctuation and non-Mandarin text through
+            # unchanged. Attach a whitespace run to the preceding token so
+            # Kokoro's timestamp alignment consumes the exact same phonemes.
+            for part in re.findall(r'\s+|\S+', segment):
+                if part.isspace() and tokens:
+                    tokens[-1].whitespace += part
+                else:
+                    tokens.append(MToken(text=part, tag='other', whitespace='', phonemes=part))
+
+        return ''.join(token.phonemes + token.whitespace for token in tokens), tokens
+
+    def __call__(self, text, en_callable=None) -> Tuple[str, Optional[List[MToken]]]:
         if not text.strip():
             return '', None
         text = cn2an.transform(text, 'an2cn')
         text = ZHG2P.map_punctuation(text)
         if self.frontend is None:
-            return ZHG2P.legacy_call(text), None
+            return ZHG2P.legacy_call(text)
         # TODO: Interleaved English is brittle, needs improvement.
         en_callable = self.en_callable if en_callable is None else en_callable
-        segments = []
+        segments: List[str] = []
+        tokens: List[MToken] = []
         for en, zh in re.findall(r'([A-Za-z \'-]*[A-Za-z][A-Za-z \'-]*)|([^A-Za-z]+)', text):
             en, zh = en.strip(), zh.strip()
             if zh:
-                segments.append(self.frontend(zh)[0])
-            elif en_callable is None:
-                segments.append(self.unk)
+                phonemes, segment_tokens = self.frontend(zh)
             else:
-                segments.append(en_callable(en))
-        # TODO: Return List[MToken] instead of None
-        return ' '.join(segments), None
+                phonemes = self.unk if en_callable is None else en_callable(en)
+                segment_tokens = [
+                    MToken(text=en, tag='eng', whitespace='', phonemes=phonemes)
+                ]
+
+            segments.append(phonemes)
+            if tokens and segment_tokens:
+                tokens[-1].whitespace += ' '
+            tokens.extend(segment_tokens)
+
+        return ' '.join(segments), tokens

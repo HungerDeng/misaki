@@ -16,7 +16,7 @@
 from .token import MToken
 import re
 from operator import itemgetter
-from typing import List
+from typing import List, Tuple
 
 import jieba.posseg as psg
 from pypinyin import lazy_pinyin
@@ -153,7 +153,11 @@ class ZHFrontend:
 
         return new_initials, new_finals
 
-    def __call__(self, text: str, with_erhua: bool = True) -> List[MToken]:
+    def __call__(
+        self,
+        text: str,
+        with_erhua: bool = True,
+    ) -> Tuple[str, List[MToken]]:
         """
         Return: list of list phonemes.
             [['w', 'o3', 'm', 'en2', ' '], ...]
