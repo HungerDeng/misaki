@@ -270,18 +270,30 @@ class JAG2P:
                 moras.append(k)
         return moras
 
-    def __call__(self, text) -> Tuple[str, Optional[List[MToken]]]:
+    def __call__(self, text, return_pitch=True) -> Tuple[str, Optional[List[MToken]]]:
         if self.cutlet:
             return self.cutlet(text)
+
+        words = []
+        capable_pitch = True
+        for word in pyopenjtalk.run_frontend(text):
+            pron, mora_size = word['pron'], word['mora_size']
+            moras = JAG2P.pron2moras(pron) if mora_size > 0 else []
+            if mora_size > 0 and not (
+                len(moras) == mora_size
+                or bool(moras) and moras[0] == 'ー' and len(moras) + 1 == mora_size
+            ):
+                capable_pitch = False
+            words.append((word, pron, moras))
+
+        if not capable_pitch or not return_pitch:
+            return self.without_pitch_call(words)
+
         tokens = []
         last_a, last_p = 0, ''
         acc, mcount = None, 0
-        for word in pyopenjtalk.run_frontend(text):
-            pron, mora_size = word['pron'], word['mora_size']
-            moras = []
-            if mora_size > 0:
-                moras = JAG2P.pron2moras(pron)
-                assert len(moras) == mora_size or len(moras) + (1 if moras[0] == 'ー' else 0) == mora_size, (moras, mora_size)
+        for word, pron, moras in words:
+            mora_size = word['mora_size']
             chain_flag = mora_size > 0 and tokens and tokens[-1]._.mora_size > 0 and (word['chain_flag'] == 1 or moras[0] == 'ー')
             if not chain_flag:
                 acc, mcount = None, 0
@@ -355,3 +367,46 @@ class JAG2P:
             result = result[:-len(tokens[-1].whitespace)]
             pitch = pitch[:len(result)]
         return result + pitch, tokens
+
+    def without_pitch_call(self, words) -> Tuple[str, Optional[List[MToken]]]:
+        tokens = []
+        rendering = []
+        for word, pron, moras in words:
+            chain_flag = bool(
+                moras and tokens and tokens[-1]._.moras
+                and (word['chain_flag'] == 1 or moras[0] == 'ー')
+            )
+            surface = word['string']
+            if surface in PUNCT_MAP:
+                surface = PUNCT_MAP[surface]
+            whitespace, phonemes = '', None
+            if moras:
+                phonemes = ''.join(M2P[m] for m in moras)
+            elif surface and all(s in PUNCT_VALUES for s in surface):
+                phonemes = surface
+                if surface[-1] in PUNCT_STOPS:
+                    whitespace = ' '
+                    if tokens:
+                        tokens[-1].whitespace = ''
+                elif surface[-1] in PUNCT_STARTS and tokens and not tokens[-1].whitespace:
+                    tokens[-1].whitespace = ' '
+            if tokens and phonemes is None and surface == '・' or surface and not surface.strip():
+                tokens[-1].whitespace = ' '
+                continue
+            tokens.append(MToken(
+                text=surface, tag=word['pos'],
+                whitespace=whitespace, phonemes=phonemes,
+                _=MToken.Underscore(pron=pron, moras=moras)
+            ))
+            rendering.append((bool(moras), chain_flag))
+        result = ''
+        for tk, (has_moras, chain_flag) in zip(tokens, rendering):
+            if tk.phonemes is None:
+                result += self.unk + tk.whitespace
+                continue
+            if has_moras and not chain_flag and result and result[-1] in TAILS and tk._.moras[0] != 'ン':
+                result += ' '
+            result += tk.phonemes + tk.whitespace
+        if tokens and tokens[-1].whitespace and result.endswith(tokens[-1].whitespace):
+            result = result[:-len(tokens[-1].whitespace)]
+        return result, tokens
