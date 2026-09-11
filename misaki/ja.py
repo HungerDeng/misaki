@@ -206,7 +206,7 @@ chr(12532)+chr(12519): 'ᶀo', #ヴョ
 })
 assert len(M2P) == 190, len(M2P)
 
-P2R = [('G','gw'),('j','y'),('K','kw'),('ç','hy'),('ƫ','ty'),('ɕ','sh'),('ɲ','ny'),('ʥ','j'),('ʦ','ts'),('ʨ','ch'),('ᶀ','by'),('ᶁ','dy'),('ᶃ','gy'),('ᶄ','ky'),('ᶆ','my'),('ᶈ','py'),('ᶉ','ry')]
+P2R = [('G','ɡᵝ'),('g','ɡ'),('K','kᵝ'),('ƫ','tʲ'),('ᶀ','bʲ'),('ᶁ','dʲ'),('ᶃ','ɡʲ'),('ᶄ','kʲ'),('ᶆ','mʲ'),('ᶈ','pʲ'),('ᶉ','rʲ')]
 
 VOWELS = frozenset('aeiou')
 assert len(VOWELS) == 5, len(VOWELS)
@@ -224,6 +224,7 @@ for k, v in M2P.items():
         assert v[0] in CONSONANTS, v
     for old, new in P2R:
         v = v.replace(old, new)
+    M2P[k] = v
 
 # TODO
 M2P['ッ'] = 'ʔ'
