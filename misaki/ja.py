@@ -224,6 +224,7 @@ for k, v in M2P.items():
         assert v[0] in CONSONANTS, v
     for old, new in P2R:
         v = v.replace(old, new)
+    M2P[k] = v
 
 # TODO
 M2P['ッ'] = 'ʔ'
